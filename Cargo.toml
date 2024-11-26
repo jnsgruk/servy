@@ -1,0 +1,42 @@
+[package]
+name = "servy"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "servy"
+path = "src/lib/lib.rs"
+
+[[bin]]
+name = "servy"
+path = "src/bin/servy/main.rs"
+
+[[bin]]
+name = "jnsgruk"
+path = "src/bin/jnsgruk/main.rs"
+
+[dependencies]
+anyhow = "1.0.93"
+axum = { version = "0.7.9", features = ["macros"] }
+axum-embed = "0.1.0"
+metrics = "0.24.0"
+metrics-exporter-prometheus = "0.16.0"
+reqwest = "0.12.9"
+rust-embed = { version = "8.5.0", features = ["interpolate-folder-path"] }
+tokio = { version = "1.0", features = ["full"] }
+tower = { version = "0.5", features = [
+    "util",
+    "timeout",
+    "load-shed",
+    "limit",
+] }
+tower-http = { version = "0.5.0", features = ["full"] }
+tower-layer = "0.3.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+url = "2.5.3"
+
+[dev-dependencies]
+axum-test = "16.4.0"
+mockito = "1.6.1"
+rstest = "0.23.0"
