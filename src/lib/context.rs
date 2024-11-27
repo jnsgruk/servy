@@ -23,7 +23,7 @@ impl AppContext {
     pub fn new(config: Config) -> Self {
         Self {
             redirects_url: config.redirects_url,
-            redirects: Arc::new(RwLock::new(HashMap::new())),
+            redirects: Arc::new(RwLock::new(Redirects::new())),
             http_client: Client::new(),
         }
     }
@@ -35,13 +35,16 @@ impl AppContext {
 
     /// Return the URL used to fetch/refresh the redirects map.
     pub fn redirects_url(&self) -> &str {
-        self.redirects_url.as_str()
+        &self.redirects_url
     }
 
     /// Refresh the redirects using the URL specified in the config.
     pub async fn refresh_redirects(&self) -> Result<Redirects> {
         let redirects = Self::fetch_redirects(self.redirects_url(), &self.http_client).await?;
-        self.redirects.write().unwrap().clone_from(&redirects);
+        match self.redirects.write() {
+            Ok(mut redirects_guard) => redirects_guard.clone_from(&redirects),
+            Err(poisoned) => poisoned.into_inner().clone_from(&redirects),
+        }
         metrics::gauge!("servy_redirects_defined").set(redirects.len() as f64);
         Ok(redirects)
     }
