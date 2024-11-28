@@ -3,7 +3,7 @@ use anyhow::{bail, Error, Result};
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{Request, StatusCode},
+    http::{self, HeaderMap, Request, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
 use axum_embed::ServeEmbed;
@@ -17,20 +17,24 @@ use tracing::Span;
 struct Assets;
 
 /// Handle requests to the root URL "/" - delegating to the default_handler.
-pub async fn root_handler(State(context): State<AppContext>) -> impl IntoResponse {
-    default_handler(Path("/".to_string()), State(context)).await
+pub async fn root_handler(
+    headers: HeaderMap,
+    State(context): State<AppContext>,
+) -> impl IntoResponse {
+    default_handler(Path("/".to_string()), State(context), headers).await
 }
 
 /// Default non-root path handler which attempts to first match a filename, then a redirect.
 pub async fn default_handler(
     Path(path): Path<String>,
     State(context): State<AppContext>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
-    match handle_file(&path).await {
+    match handle_file(&headers, &path).await {
         Ok(file) => file.into_response(),
         Err(_) => match handle_redirect(&path, &context).await {
             Ok(redirect) => redirect.into_response(),
-            Err(_) => handle_not_found().await,
+            Err(_) => handle_not_found(&headers).await,
         },
     }
 }
@@ -77,7 +81,7 @@ async fn handle_redirect(path: &str, context: &AppContext) -> Result<Response> {
 /// Construct a response for a given filepath. Use the embedded file server to return the
 /// appropriate file, recording the filename in the current span. If the path specified is a
 /// directory, and the directory contains an 'index.html' file, then serve it.
-async fn handle_file(path: &str) -> Result<Response> {
+async fn handle_file(headers: &HeaderMap, path: &str) -> Result<Response> {
     let file_server = ServeEmbed::<Assets>::new();
 
     let mut filename = path.to_string();
@@ -95,6 +99,26 @@ async fn handle_file(path: &str) -> Result<Response> {
         .body(Body::empty())?;
 
     let mut resp = file_server.oneshot(req).await?;
+
+    // Check the If-None-Match header of the request
+    let request_inm = header_val_or_empty(http::header::IF_NONE_MATCH, headers);
+
+    if !request_inm.is_empty() {
+        // Get the ETag header of the potential response from ServeEmbed
+        let response_etag = header_val_or_empty(http::header::ETAG, resp.headers());
+
+        // If the ETag of the response matches the If-None-Match header of the request,
+        // return a 304 Not Modified response
+        if request_inm == response_etag {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .body(Body::empty())
+                .unwrap_or(
+                    (StatusCode::NOT_MODIFIED, String::from("Not Modified")).into_response(),
+                ));
+        }
+    }
+
     if resp.status().is_success() {
         if filename == "404.html" {
             let status = resp.status_mut();
@@ -110,8 +134,8 @@ async fn handle_file(path: &str) -> Result<Response> {
 
 /// Construct an appropriate "Not Found" response. If there is a 404.html page present
 /// in the webroot, then serve that, otherwise serve a plain response with a 404 status code
-async fn handle_not_found() -> Response<Body> {
-    match handle_file("404.html").await {
+async fn handle_not_found(headers: &HeaderMap) -> Response<Body> {
+    match handle_file(headers, "404.html").await {
         Ok(response) => response,
         Err(_) => Response::builder()
             .status(StatusCode::NOT_FOUND)
@@ -131,3 +155,34 @@ fn do_redirect(key: &str, redirect: &str) -> Result<Response> {
     Ok(Redirect::permanent(redirect).into_response())
 }
 
+/// Extract a header value from a header map, or return an empty string if the header is absent.
+fn header_val_or_empty(header: http::HeaderName, headers: &HeaderMap) -> String {
+    headers
+        .get(header)
+        .and_then(|value| value.to_str().ok().map(|value| value.to_string()))
+        .unwrap_or("".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use http::HeaderName;
+
+    use super::*;
+
+    #[test]
+    fn test_header_val_or_empty() {
+        let mut headers = HeaderMap::new();
+        let header_name = HeaderName::from_static("x-test-header");
+
+        // Test when header is present
+        headers.insert(header_name.clone(), "test_value".parse().unwrap());
+        assert_eq!(
+            header_val_or_empty(header_name.clone(), &headers),
+            "test_value"
+        );
+
+        // Test when header is absent
+        let absent_header_name = HeaderName::from_static("x-absent-header");
+        assert_eq!(header_val_or_empty(absent_header_name, &headers), "");
+    }
+}
