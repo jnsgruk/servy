@@ -101,15 +101,15 @@ async fn handle_file(headers: &HeaderMap, path: &str) -> Result<Response> {
     let mut resp = file_server.oneshot(req).await?;
 
     // Check the If-None-Match header of the request
-    let request_inm = header_val_or_empty(http::header::IF_NONE_MATCH, headers);
+    let request_inm = header_value(http::header::IF_NONE_MATCH, headers);
 
-    if !request_inm.is_empty() {
+    if request_inm.is_some() {
         // Get the ETag header of the potential response from ServeEmbed
-        let response_etag = header_val_or_empty(http::header::ETAG, resp.headers());
+        let response_etag = header_value(http::header::ETAG, resp.headers());
 
         // If the ETag of the response matches the If-None-Match header of the request,
         // return a 304 Not Modified response
-        if request_inm == response_etag {
+        if Some(request_inm) == Some(response_etag) {
             return Ok(Response::builder()
                 .status(StatusCode::NOT_MODIFIED)
                 .body(Body::empty())
@@ -156,11 +156,10 @@ fn do_redirect(key: &str, redirect: &str) -> Result<Response> {
 }
 
 /// Extract a header value from a header map, or return an empty string if the header is absent.
-fn header_val_or_empty(header: http::HeaderName, headers: &HeaderMap) -> String {
+fn header_value(header: http::HeaderName, headers: &HeaderMap) -> Option<String> {
     headers
         .get(header)
         .and_then(|value| value.to_str().ok().map(|value| value.to_string()))
-        .unwrap_or("".to_string())
 }
 
 #[cfg(test)]
@@ -177,12 +176,12 @@ mod tests {
         // Test when header is present
         headers.insert(header_name.clone(), "test_value".parse().unwrap());
         assert_eq!(
-            header_val_or_empty(header_name.clone(), &headers),
-            "test_value"
+            header_value(header_name.clone(), &headers),
+            Some("test_value".to_string())
         );
 
         // Test when header is absent
         let absent_header_name = HeaderName::from_static("x-absent-header");
-        assert_eq!(header_val_or_empty(absent_header_name, &headers), "");
+        assert_eq!(header_value(absent_header_name, &headers), None);
     }
 }
